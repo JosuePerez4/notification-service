@@ -1,0 +1,7 @@
+/home/izz00/Documentos/proyecto-microservicios/notification-service/src/main/java/microservice/service/notification/NotificationApplication.java
+/home/izz00/Documentos/proyecto-microservicios/notification-service/src/main/java/microservice/service/notification/config/RabbitMQConfig.java
+/home/izz00/Documentos/proyecto-microservicios/notification-service/src/main/java/microservice/service/notification/controller/NotificationController.java
+/home/izz00/Documentos/proyecto-microservicios/notification-service/src/main/java/microservice/service/notification/dto/PaperEvaluatedEvent.java
+/home/izz00/Documentos/proyecto-microservicios/notification-service/src/main/java/microservice/service/notification/listener/PaperEventListener.java
+/home/izz00/Documentos/proyecto-microservicios/notification-service/src/main/java/microservice/service/notification/model/NotificationLog.java
+/home/izz00/Documentos/proyecto-microservicios/notification-service/src/main/java/microservice/service/notification/repository/NotificationLogRepository.java
