@@ -38,6 +38,25 @@ Key codepaths:
 - `NotificationLogRepository` stores and queries `NotificationLog` JPA entities.
 - `NotificationController` exposes `GET /notifications/paper/{paperId}`.
 
+## Notification log model
+
+`NotificationLog` is the only persisted entity. Each row represents one
+attempted notification record for one paper author.
+
+| Field | Source | Notes |
+| --- | --- | --- |
+| `id` | Database-generated identity | Numeric primary key. |
+| `paperId` | `data.paperId` | Used by the REST query endpoint. |
+| `conferenceId` | `data.conferenceId` | Stored for downstream filtering/auditing. |
+| `recipientEmail` | `data.authors[].email` | One row is created per author entry. |
+| `subject` | Service-generated | `Evaluation Result for your Paper: {title}`. |
+| `content` | Service-generated | Includes title, paper ID, evaluation status, and observations. |
+| `sentAt` | Service-generated | `LocalDateTime.now()` at message consumption time. |
+| `status` | Service-generated | Currently always `SENT`; it is not the paper evaluation status. |
+
+Event metadata such as `eventId`, `eventVersion`, `occurredAt`, and `source` is
+accepted by the DTO but is not stored in `NotificationLog`.
+
 ## Runtime requirements
 
 - Java 21
@@ -107,6 +126,53 @@ Hibernate is configured with `spring.jpa.hibernate.ddl-auto=update`, so the
 database schema is updated from the JPA entity model when the app starts. Review
 schema changes before pointing the service at shared or production databases.
 
+### Manual event smoke test
+
+After PostgreSQL, RabbitMQ, and the service are running, publish one evaluated
+paper event and query the REST API for the paper ID. For example, with
+`rabbitmqadmin` configured for the same broker and virtual host:
+
+```bash
+EVENT_PAYLOAD='{
+  "eventType": "paper.evaluated",
+  "eventVersion": "1.0",
+  "eventId": "4e527764-69a2-4e83-a7fb-843d3198c29e",
+  "occurredAt": "2026-05-10T00:00:00Z",
+  "source": "paper-service",
+  "data": {
+    "paperId": "ad1f0d72-7aa8-4c83-8ef2-dfa645bf3a89",
+    "conferenceId": "fd59fd63-1a36-44e5-92b1-00953a1d72be",
+    "title": "Reliable Event-Driven Systems",
+    "topic": "software-architecture",
+    "status": "ACCEPTED",
+    "evaluationObservations": "Strong contribution and clear methodology.",
+    "evaluatedBy": {
+      "userId": "29573324-a2fd-4916-b7d7-8933ff16d81e",
+      "role": "CHAIR"
+    },
+    "authors": [
+      {
+        "name": "Ada Lovelace",
+        "email": "ada@example.com"
+      }
+    ]
+  }
+}'
+
+rabbitmqadmin publish \
+  exchange=paper.events \
+  routing_key=paper.evaluated \
+  properties='{"content_type":"application/json"}' \
+  payload="$EVENT_PAYLOAD"
+
+curl http://localhost:8086/notifications/paper/ad1f0d72-7aa8-4c83-8ef2-dfa645bf3a89
+```
+
+Replace the exchange, routing key, port, and paper ID with the values from your
+environment. The service declares the configured exchange, queue, and binding at
+startup, but the publisher must use the same routing key for the listener queue
+to receive the message.
+
 ## Event contract
 
 The listener expects JSON matching `PaperEvaluatedEvent`. The important fields
@@ -152,6 +218,21 @@ Example message:
 If the event or `data` is null, the listener logs a warning and does not persist
 anything. If `authors` is null or empty, it logs a warning and no notification
 records are created.
+
+### Processing semantics and constraints
+
+- RabbitMQ messages are converted from JSON into `PaperEvaluatedEvent` with
+  `Jackson2JsonMessageConverter`; UUID and timestamp values must be parseable by
+  Jackson for the record field types.
+- For valid events with authors, the listener writes one `NotificationLog` row
+  per author using the same generated subject and content for each row.
+- The service does not deduplicate events by `eventId`, `paperId`, author email,
+  or content. Re-delivered or republished events create additional rows.
+- Author email values are copied as received. The publisher should ensure author
+  entries contain usable email addresses.
+- Missing optional text values such as `title`, `status`, or
+  `evaluationObservations` are not normalized by the listener; incomplete input
+  can produce incomplete subject/content text.
 
 ## REST API
 
