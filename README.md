@@ -107,6 +107,51 @@ Hibernate is configured with `spring.jpa.hibernate.ddl-auto=update`, so the
 database schema is updated from the JPA entity model when the app starts. Review
 schema changes before pointing the service at shared or production databases.
 
+### Manual smoke test
+
+After the service is running, publish one evaluated-paper event and query the
+created logs. If the RabbitMQ management API is enabled locally, this publishes
+to the default `/` virtual host and the `paper.events` exchange from the example
+environment above:
+
+```bash
+curl -u guest:guest \
+  -H "content-type: application/json" \
+  -X POST http://localhost:15672/api/exchanges/%2F/paper.events/publish \
+  -d '{
+    "properties": {},
+    "routing_key": "paper.evaluated",
+    "payload_encoding": "string",
+    "payload": "{\"eventType\":\"paper.evaluated\",\"eventVersion\":\"1.0\",\"eventId\":\"4e527764-69a2-4e83-a7fb-843d3198c29e\",\"occurredAt\":\"2026-05-10T00:00:00Z\",\"source\":\"paper-service\",\"data\":{\"paperId\":\"ad1f0d72-7aa8-4c83-8ef2-dfa645bf3a89\",\"conferenceId\":\"fd59fd63-1a36-44e5-92b1-00953a1d72be\",\"title\":\"Reliable Event-Driven Systems\",\"topic\":\"software-architecture\",\"status\":\"ACCEPTED\",\"evaluationObservations\":\"Strong contribution and clear methodology.\",\"evaluatedBy\":{\"userId\":\"29573324-a2fd-4916-b7d7-8933ff16d81e\",\"role\":\"CHAIR\"},\"authors\":[{\"name\":\"Ada Lovelace\",\"email\":\"ada@example.com\"}]}}"
+  }'
+```
+
+Then verify that the notification log is visible through the service API:
+
+```bash
+curl http://localhost:8086/notifications/paper/ad1f0d72-7aa8-4c83-8ef2-dfa645bf3a89
+```
+
+## Persistence model
+
+`NotificationLog` is the only persisted entity. Each saved row contains:
+
+| Field | Source |
+| --- | --- |
+| `id` | Database-generated identity value. |
+| `paperId` | `data.paperId` from the event. |
+| `conferenceId` | `data.conferenceId` from the event. |
+| `recipientEmail` | `data.authors[].email` from each author entry. |
+| `subject` | Built as `Evaluation Result for your Paper: {title}`. |
+| `content` | Built from `title`, `paperId`, `status`, and `evaluationObservations`. |
+| `sentAt` | `LocalDateTime.now()` when the listener handles the event. |
+| `status` | Always stored as `SENT` by the current listener. |
+
+The REST API returns the JPA entity directly, so these field names are also the
+JSON response shape. There are no explicit uniqueness constraints or
+deduplication checks in the current code; replaying the same event creates
+additional rows for each author.
+
 ## Event contract
 
 The listener expects JSON matching `PaperEvaluatedEvent`. The important fields
@@ -152,6 +197,16 @@ Example message:
 If the event or `data` is null, the listener logs a warning and does not persist
 anything. If `authors` is null or empty, it logs a warning and no notification
 records are created.
+
+Processing constraints:
+
+- `eventId`, `eventVersion`, `occurredAt`, `source`, `topic`, `evaluatedBy`, and
+  author `name` are accepted by the DTO but are not persisted.
+- The listener uses `title`, `status`, `evaluationObservations`, and
+  `authors[].email` as received. It does not validate email syntax or reject
+  missing optional-looking text fields.
+- There is no idempotency key. Duplicate RabbitMQ deliveries or manual replays
+  create duplicate notification log rows.
 
 ## REST API
 
