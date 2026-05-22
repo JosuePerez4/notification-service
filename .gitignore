@@ -1,4 +1,15 @@
-// 
+HELP.md
+
+.env
+.env.local
+*.env.local
+
+# Maven / compilados (no subir al repo)
+target/
+build/
+*.class
+*.jar
+
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
@@ -27,4 +38,3 @@
 
 ### VS Code ###
 .vscode/
-.env
