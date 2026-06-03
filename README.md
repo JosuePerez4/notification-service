@@ -37,6 +37,9 @@ Key codepaths:
   `RABBITMQ_QUEUE_NOTIFICATION`, builds a subject/content string, and saves logs.
 - `NotificationLogRepository` stores and queries `NotificationLog` JPA entities.
 - `NotificationController` exposes `GET /notifications/paper/{paperId}`.
+- Spring Cloud Netflix Eureka client registers the service as
+  `notification-service` using `EUREKA_SERVER_URL`.
+- Spring Boot Actuator exposes health and info endpoints for runtime checks.
 
 ## Runtime requirements
 
@@ -44,6 +47,7 @@ Key codepaths:
 - Maven
 - PostgreSQL database
 - RabbitMQ broker reachable by the service
+- Eureka server reachable by the service registry client
 
 The application imports configuration from `.env` files at the repository root
 or `./notification-service/.env`.
@@ -65,6 +69,7 @@ Required variables:
 | `RABBITMQ_ROUTING_KEY_EVALUATED` | Binding/routing key | Expected value for evaluated-paper events, for example `paper.evaluated`. |
 | `RABBITMQ_QUEUE_NOTIFICATION` | Queue consumed by the listener | Declared and consumed by the service. |
 | `NOTIFICATION_SERVICE_PORT` | HTTP port | Example: `8086`. |
+| `EUREKA_SERVER_URL` | Eureka registry URL | Example: `http://localhost:8761/eureka/`. |
 
 Example local `.env`:
 
@@ -85,13 +90,14 @@ RABBITMQ_ROUTING_KEY_EVALUATED=paper.evaluated
 RABBITMQ_QUEUE_NOTIFICATION=notification.paper.evaluated
 
 NOTIFICATION_SERVICE_PORT=8086
+EUREKA_SERVER_URL=http://localhost:8761/eureka/
 ```
 
 Do not commit real credentials in `.env` files.
 
 ## Run locally
 
-Start PostgreSQL and RabbitMQ first, then run:
+Start PostgreSQL, RabbitMQ, and the Eureka server first, then run:
 
 ```bash
 mvn spring-boot:run
@@ -106,6 +112,41 @@ mvn clean package
 Hibernate is configured with `spring.jpa.hibernate.ddl-auto=update`, so the
 database schema is updated from the JPA entity model when the app starts. Review
 schema changes before pointing the service at shared or production databases.
+
+## Service discovery and health checks
+
+The service uses the Spring application name `notification-service`. With
+`spring-cloud-starter-netflix-eureka-client` on the classpath, it registers with
+the Eureka server configured in `EUREKA_SERVER_URL`. The instance configuration
+sets `eureka.instance.prefer-ip-address=true`, so consumers should expect Eureka
+to advertise the instance IP address instead of only the hostname.
+
+Actuator is enabled for lightweight operational checks:
+
+```http
+GET /actuator/health
+GET /actuator/info
+```
+
+Only `health` and `info` are exposed over HTTP. Health details are configured
+with `management.endpoint.health.show-details=always`, and probe support is
+enabled through `management.endpoint.health.probes.enabled=true`.
+
+## Container image
+
+The Dockerfile builds the service with Maven on Java 21 and copies
+`target/notification-0.0.1-SNAPSHOT.jar` into a Java 21 JRE image. It runs as a
+non-root `app` user and exposes port `8086`.
+
+Build and run locally:
+
+```bash
+docker build -t notification-service .
+docker run --env-file .env -p 8086:8086 notification-service
+```
+
+Keep `NOTIFICATION_SERVICE_PORT=8086` when using the example command, or update
+the port mapping to match the configured service port.
 
 ## Event contract
 
@@ -198,16 +239,21 @@ Use this checklist when the service starts but does not create logs:
 
 1. Confirm all required environment variables are set. Missing values fail
    startup because `application.yml` and `RabbitMQConfig` resolve them directly.
-2. Confirm RabbitMQ connectivity, virtual host, credentials, and TLS setting.
+2. Confirm the Eureka server URL is reachable if the application fails during
+   service discovery startup or does not appear in the registry as
+   `notification-service`.
+3. Confirm RabbitMQ connectivity, virtual host, credentials, and TLS setting.
    Local brokers usually need `RABBITMQ_SSL_ENABLED=false`.
-3. Verify the exchange, queue, and routing key values match the publisher. The
+4. Verify the exchange, queue, and routing key values match the publisher. The
    service binds `RABBITMQ_QUEUE_NOTIFICATION` to `RABBITMQ_EXCHANGE` with
    `RABBITMQ_ROUTING_KEY_EVALUATED`.
-4. Check that published messages match the `PaperEvaluatedEvent` JSON shape and
+5. Check that published messages match the `PaperEvaluatedEvent` JSON shape and
    include at least one author. Events without authors are acknowledged but do
    not create rows.
-5. Query the REST endpoint with the exact `paperId` from the event.
-6. Review application logs for:
+6. Query the REST endpoint with the exact `paperId` from the event.
+7. Review `/actuator/health` for database, RabbitMQ, and application health
+   details while the service is running.
+8. Review application logs for:
    - `Received paper.evaluated event for paperId: ...`
    - `Notification log persisted for author: ...`
    - warnings about null events/data or missing authors.
@@ -218,7 +264,12 @@ Use this checklist when the service starts but does not create logs:
   non-TLS local RabbitMQ.
 - `NOTIFICATION_SERVICE_PORT` has no default in `application.yml`; define it in
   the environment or `.env`.
+- `EUREKA_SERVER_URL` has no default in `application.yml`; define it for local
+  runs even when you are only testing the REST endpoint.
 - The listener only persists logs after receiving RabbitMQ events. Calling the
   REST endpoint before publishing an event returns an empty list.
 - The persisted `sentAt` value is generated by the service at consumption time,
   not copied from the event `occurredAt`.
+- The Dockerfile exposes `8086`, but Spring still listens on
+  `NOTIFICATION_SERVICE_PORT`; keep the container port mapping aligned with that
+  variable.
