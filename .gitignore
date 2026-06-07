@@ -1,8 +1,8 @@
 HELP.md
 
-.env
 .env.local
 *.env.local
+.env
 
 # Maven / compilados (no subir al repo)
 target/
