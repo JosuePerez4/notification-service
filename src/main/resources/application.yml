@@ -25,6 +25,18 @@ spring:
     virtual-host: ${RABBITMQ_VHOST}
     ssl:
       enabled: ${RABBITMQ_SSL_ENABLED:true}
+  mail:
+    host: ${BREVO_SMTP_HOST}
+    port: ${BREVO_SMTP_PORT}
+    username: ${BREVO_SMTP_USERNAME}
+    password: ${BREVO_SMTP_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
 
 server:
   port: ${NOTIFICATION_SERVICE_PORT}
